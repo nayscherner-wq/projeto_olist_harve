@@ -1,0 +1,235 @@
+import pandas as pd
+
+#Carregando os arquivos CSV
+
+orders = pd.read_csv("olist_orders_dataset.csv")
+
+payments = pd.read_csv("olist_order_payments_dataset.csv")
+
+reviews = pd.read_csv("olist_order_reviews_dataset.csv")
+
+customers = pd.read_csv("olist_order_customer_dataset.csv")
+
+
+#tratamento de data
+
+orders["order_purchase_timestamp"] = pd.to_datetime(
+    orders["order_purchase_timestamp"]
+)
+
+orders["order_approved_at"] = pd.to_datetime(
+    orders["order_approved_at"]
+)
+
+orders["order_delivered_customer_date"] = pd.to_datetime(
+    orders["order_delivered_customer_date"]
+)
+
+#filtrando apenas os pedidos aprovados e entregues
+
+orders_entregues = orders[
+    orders["order_approved_at"].notna()
+    &
+    orders["order_delivered_customer_date"].notna()
+].copy()
+
+
+print("Total de pedidos originais:", len(orders))
+print("Total de pedidos entregues:", len(orders_entregues))
+
+
+#trazer o custumer_unique_id
+
+orders_clientes = orders_entregues.merge(
+    customers[
+        [
+            "customer_id",
+            "customer_unique_id",
+            "customer_city",
+            "customer_state"
+        ]
+    ],
+    on="customer_id",
+    how="left"
+)
+
+#somar valor de pagamentos por pedido
+
+pagamento_pedido = (
+    payments
+    .groupby("order_id")
+    .agg(
+        valor_pago=("payment_value", "sum")
+    )
+    .reset_index()
+)
+
+
+# filtrar somente os pedidos entregues
+
+pagamento_entregue = pagamento_pedido[
+    pagamento_pedido["order_id"].isin(
+        orders_entregues["order_id"]
+    )
+].copy()
+
+
+#juntar pedidos com pagamentos
+
+pedidos_clientes = orders_clientes[
+    [
+        "order_id",
+        "customer_id",
+        "customer_unique_id",
+        "customer_city",
+        "customer_state",
+        "order_purchase_timestamp"
+    ]
+].merge(
+    pagamento_entregue,
+    on="order_id",
+    how="left"
+)
+
+
+#agrupar pedidos por clientes
+
+df_clientes = (
+    pedidos_clientes
+    .groupby("customer_unique_id")
+    .agg(
+        qtd_pedidos=("order_id", "nunique"),
+
+        valor_total=("valor_pago", "sum"),
+
+        primeira_compra=(
+            "order_purchase_timestamp",
+            "min"
+        ),
+
+        ultima_compra=(
+            "order_purchase_timestamp",
+            "max"
+        ),
+
+        customer_city=(
+            "customer_city",
+            "first"
+        ),
+
+        customer_state=(
+            "customer_state",
+            "first"
+        )
+    )
+    .reset_index()
+)
+
+
+#classificar o cliente
+
+df_clientes["tipo_cliente"] = df_clientes[
+    "qtd_pedidos"
+].apply(
+    lambda x: "Recorrente" if x > 1 else "Novo"
+)
+
+
+#calcularo o ticket médio
+
+df_clientes["ticket_medio"] = (
+    df_clientes["valor_total"]
+    /
+    df_clientes["qtd_pedidos"]
+)
+
+
+#analises dos clientes, verificação e quantidade, novos ou recorrentes, percentual
+
+print("\n-----------------------------------")
+print("PRIMEIROS CLIENTES")
+print("-----------------------------------")
+
+print(
+    df_clientes.head(10)
+)
+
+
+
+print("\n-----------------------------------")
+print("TIPO DE CLIENTE")
+print("-----------------------------------")
+
+print(
+    df_clientes["tipo_cliente"].value_counts()
+)
+
+
+print("\n-----------------------------------")
+print("PERCENTUAL DE CLIENTES")
+print("-----------------------------------")
+
+percentual_clientes = (
+    df_clientes["tipo_cliente"]
+    .value_counts(normalize=True)
+    .mul(100)
+    .round(2)
+)
+
+print(percentual_clientes)
+
+
+print("\n-----------------------------------")
+print("CLIENTES COM MAIS DE 1 PEDIDO")
+print("-----------------------------------")
+
+quantidade_recorrentes = (
+    df_clientes["qtd_pedidos"] > 1
+).sum()
+
+print(
+    "Quantidade de clientes recorrentes:",
+    quantidade_recorrentes
+)
+
+
+#clientes com maior valor total
+
+print("\n-----------------------------------")
+print("TOP 10 CLIENTES POR VALOR TOTAL")
+print("-----------------------------------")
+
+top_clientes = (
+    df_clientes
+    .sort_values(
+        "valor_total",
+        ascending=False
+    )
+    .head(10)
+)
+
+print(top_clientes)
+
+# top 10 de clientes recorrentes
+
+print("\n-----------------------------------")
+print("TOP 10 CLIENTES RECORRENTES")
+print("-----------------------------------")
+
+top_recorrentes = (
+    df_clientes[
+        df_clientes["tipo_cliente"] == "Recorrente"
+    ]
+    .sort_values(
+        "qtd_pedidos",
+        ascending=False
+    )
+    .head(10)
+)
+
+print(top_recorrentes)
+
+#exportar df_clientes para csv
+
+df_clientes.to_csv("df_clientes.csv",index=False,encoding="utf-8-sig")
+
